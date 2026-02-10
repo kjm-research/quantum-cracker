@@ -8,10 +8,10 @@ import os
 from datetime import datetime
 
 from quantum_cracker import __version__
-from quantum_cracker.core.key_interface import KeyInput
-from quantum_cracker.core.voxel_grid import SphericalVoxelGrid
-from quantum_cracker.core.rip_engine import RipEngine
 from quantum_cracker.core.harmonic_compiler import HarmonicCompiler
+from quantum_cracker.core.key_interface import KeyInput
+from quantum_cracker.core.rip_engine import RipEngine
+from quantum_cracker.core.voxel_grid import SphericalVoxelGrid
 from quantum_cracker.analysis.metrics import MetricExtractor
 from quantum_cracker.analysis.validation import Validator
 from quantum_cracker.utils.types import SimulationConfig
@@ -37,10 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
     sim.add_argument("--sh-filter", action="store_true", help="Apply SH filter during compilation")
 
     # visualize
-    viz = sub.add_parser("visualize", help="Launch 3D renderer")
+    viz = sub.add_parser("visualize", help="Launch 3D renderer with live resonance")
     viz.add_argument("--key", type=str, help="256-bit key (hex)")
     viz.add_argument("--random", action="store_true", help="Generate random key")
-    viz.add_argument("--grid-size", type=int, default=20, help="Voxel grid size")
+    viz.add_argument("--grid-size", type=int, default=78, help="Voxel grid size (default 78)")
 
     return parser
 
@@ -178,24 +178,33 @@ def export_csv(
 
 
 def run_visualize(args: argparse.Namespace) -> None:
-    """Launch 3D renderer."""
+    """Launch 3D renderer with live harmonic resonance."""
     key = get_key(args)
     grid_size = args.grid_size
 
     print(f"Key: {key.as_hex}")
     print(f"Grid: {grid_size}x{grid_size}x{grid_size}")
-    print("Launching 3D renderer...")
-    print("  SPACE=pause  R=reset  +/-=speed  1/2=toggle  ESC=close")
+    print()
 
+    print("Initializing voxel grid...")
     grid = SphericalVoxelGrid(size=grid_size)
     grid.initialize_from_key(key)
 
+    print("Initializing rip engine...")
     engine = RipEngine()
     engine.initialize_from_key(key)
 
+    print("Initializing harmonic compiler...")
+    config = SimulationConfig(grid_size=grid_size)
+    compiler = HarmonicCompiler(grid, config=config)
+
+    print("Launching 3D renderer...")
+    print("  SPACE=pause  R=reset  +/-=speed  1/2=toggle  ESC=close")
+    print()
+
     from quantum_cracker.visualization.renderer import QuantumRenderer
 
-    renderer = QuantumRenderer(grid, engine)
+    renderer = QuantumRenderer(grid, engine, compiler=compiler)
     renderer.run()
 
 

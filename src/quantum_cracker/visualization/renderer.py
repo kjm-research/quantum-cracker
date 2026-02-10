@@ -66,6 +66,7 @@ except ImportError:
 import pyrr
 
 if TYPE_CHECKING:
+    from quantum_cracker.core.harmonic_compiler import HarmonicCompiler
     from quantum_cracker.core.rip_engine import RipEngine
     from quantum_cracker.core.voxel_grid import SphericalVoxelGrid
 
@@ -113,6 +114,7 @@ class QuantumRenderer:
         self,
         grid: SphericalVoxelGrid,
         engine: RipEngine,
+        compiler: HarmonicCompiler | None = None,
         width: int = 1280,
         height: int = 720,
     ) -> None:
@@ -121,8 +123,10 @@ class QuantumRenderer:
 
         self.grid = grid
         self.engine = engine
+        self.compiler = compiler
         self.width = width
         self.height = height
+        self.step_count: int = 0
 
         # Camera state
         self.camera_distance: float = 3.0
@@ -205,7 +209,8 @@ class QuantumRenderer:
 
         Each vertex: [x, y, z, amplitude, energy, theta, phi] = 7 floats.
         Only include voxels above an energy threshold to avoid rendering
-        empty space.
+        empty space.  Static data (coords, theta, phi) is cached for
+        efficient per-frame updates when the compiler is active.
         """
         coords = self.grid.get_cartesian_coords()  # (N^3, 3)
 
@@ -225,13 +230,19 @@ class QuantumRenderer:
         threshold = np.percentile(energy_flat[energy_flat > 0], 10) if np.any(energy_flat > 0) else 0.0
         mask = energy_flat > threshold
 
+        # Cache static columns for efficient per-frame updates
+        self._voxel_mask = mask
+        self._voxel_coords = coords[mask].astype(np.float32)
+        self._voxel_theta = theta_flat[mask].astype(np.float32)
+        self._voxel_phi = phi_flat[mask].astype(np.float32)
+
         # Build vertex data: [x, y, z, amplitude, energy, theta, phi]
         vertices = np.column_stack([
-            coords[mask],
-            amp_flat[mask],
-            energy_flat[mask],
-            theta_flat[mask],
-            phi_flat[mask],
+            self._voxel_coords,
+            amp_flat[mask].astype(np.float32),
+            energy_flat[mask].astype(np.float32),
+            self._voxel_theta,
+            self._voxel_phi,
         ]).astype(np.float32)
 
         self.voxel_count = len(vertices)
@@ -297,6 +308,26 @@ class QuantumRenderer:
         glEnableVertexAttribArray(1)
 
         glBindVertexArray(0)
+
+    def _update_voxel_buffer(self) -> None:
+        """Update voxel amplitude/energy data in the VBO.
+
+        Reuses cached static coords, theta, phi -- only the amplitude and
+        energy columns change each frame.
+        """
+        amp_flat = self.grid.amplitude.ravel()[self._voxel_mask].astype(np.float32)
+        energy_flat = self.grid.energy.ravel()[self._voxel_mask].astype(np.float32)
+
+        vertices = np.column_stack([
+            self._voxel_coords,
+            amp_flat,
+            energy_flat,
+            self._voxel_theta,
+            self._voxel_phi,
+        ]).astype(np.float32)
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.voxel_vbo)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
 
     def _update_thread_buffer(self) -> None:
         """Update thread visibility data in the VBO."""
@@ -377,6 +408,7 @@ class QuantumRenderer:
     def run(self) -> None:
         """Main render loop."""
         self.initialize()
+        last_time = glfw.get_time()
 
         while not glfw.window_should_close(self.window):
             glfw.poll_events()
@@ -384,8 +416,31 @@ class QuantumRenderer:
             if not self.paused:
                 dt = 0.016 * self.animation_speed  # ~60fps
                 self.time += dt
+                self.step_count += 1
+
+                # Step rip engine
                 self.engine.step(dt=dt)
                 self._update_thread_buffer()
+
+                # Step harmonic compiler (resonance on voxel grid)
+                if self.compiler is not None:
+                    self.compiler.apply_resonance(self.time)
+                    self._update_voxel_buffer()
+
+            # Update window title with stats every 0.5s
+            now = glfw.get_time()
+            if now - last_time > 0.5:
+                fps = 1.0 / max(now - last_time, 0.001) * (self.step_count if self.step_count > 0 else 1)
+                vis = self.engine.num_visible
+                title = (
+                    f"Quantum Cracker | Step {self.step_count} | "
+                    f"Visible {vis}/256 | "
+                    f"Radius {self.engine.radius:.2e}m"
+                )
+                if self.paused:
+                    title += " | PAUSED"
+                glfw.set_window_title(self.window, title)
+                last_time = now
 
             self.render_frame()
 
