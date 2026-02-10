@@ -18,7 +18,7 @@ class SimulationConfig:
     resonance_strength: float = 0.05
     timesteps: int = 1000
     dt: float = 0.01
-    expansion_rate: float = 1.616255e-35  # Planck length per tick
+    expansion_rate: float = 0.01  # fractional radius growth per tick
 
 
 @dataclass
