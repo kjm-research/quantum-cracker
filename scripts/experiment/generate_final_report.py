@@ -416,6 +416,16 @@ def main():
         "implication": "ECDH secure when: ephemeral keys + point validation + constant-time + twist-secure curve.",
     })
 
+    # Unified Attack Tree
+    report_rows.append({
+        "experiment": "Grand Unified Attack Tree",
+        "method": "15 attacks as constraints, 7 multi-vector trees, 6 pipelines, quantum timeline",
+        "result": "4/7 trees work NOW classically; quantum hybrid cuts Shor from 2330 to 312 qubits",
+        "signal": "N/A (synthesis)",
+        "detail": "Orthogonal constraints compound: 5x20-bit leaks = 100 known bits -> Grover on 156. Escalation ladder to Shor.",
+        "implication": "No single leak breaks hardened impl, but combined leaks + quantum dramatically lower the bar.",
+    })
+
     # Grand Security Proof
     report_rows.append({
         "experiment": "Grand Unified Security Proof",
@@ -441,7 +451,7 @@ def main():
 
     print(f"""
   EXPERIMENTS RUN: {len(report_rows)}
-  TOTAL SCRIPTS: 58 experiment files, ~30,000 lines of code
+  TOTAL SCRIPTS: 59 experiment files, ~31,200 lines of code
   APPROACHES TESTED:
     - 256 mathematical oracles across 10 keys (Phase 1)
     - Differential harmonic analysis on 64 bit positions (Phase 2)
@@ -475,6 +485,7 @@ def main():
     - Weak RNG / brain wallet / Profanity / Android SecureRandom
     - ECDSA signature malleability (Mt. Gox, SegWit, Schnorr)
     - ECDH key agreement security (CDH=DLP, forward secrecy, TLS 1.3)
+    - Grand unified attack tree (15 vectors, 7 trees, 6 pipelines)
 
   SIGNALS FOUND: 2 mathematical + 7 implementation + 1 protocol
     Mathematical (require conditions that don't exist):
