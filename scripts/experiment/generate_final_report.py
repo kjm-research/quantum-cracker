@@ -326,6 +326,66 @@ def main():
         "implication": "The closest anyone came to subexponential EC attack. secp256k1 is immune.",
     })
 
+    # Semaev Summation Polynomials
+    report_rows.append({
+        "experiment": "Semaev Summation Polynomials",
+        "method": "m-way decomposition with summation polys, Groebner basis analysis",
+        "result": "Poly degree 2^(m-2) makes all decompositions >= O(2^128)",
+        "signal": "N/A (immune)",
+        "detail": "Best m=6: search 2^42.7 but Groebner 2^48. No m gives subexponential for F_p.",
+        "implication": "Only theoretical path to subexp ECDLP. Stuck at exponential for prime fields.",
+    })
+
+    # GLV Endomorphism
+    report_rows.append({
+        "experiment": "GLV Endomorphism Pollard Rho",
+        "method": "secp256k1 cube-root endomorphism, 6-element equivalence classes",
+        "result": "sqrt(6)=2.45x speedup confirmed; 2^128->2^126.7",
+        "signal": "N/A (known)",
+        "detail": "beta^3=1 mod p, lambda^3=1 mod n verified. GLV decomposition reduces 256-bit to 128-bit.",
+        "implication": "Best known classical optimization. Still 2^126.7 ops = infeasible.",
+    })
+
+    # ECDSA Fault Injection
+    report_rows.append({
+        "experiment": "ECDSA Fault Injection",
+        "method": "Bit-flip, step-skip, and Bellcore (faulty curve) attacks on ECDSA signing",
+        "result": "100% key recovery with all fault models",
+        "signal": "YES (impl)",
+        "detail": "kG bit-flip: 100%. D&A step skip: 80-100%. Bellcore a-fault: 100%. b-fault: 0% (math insight).",
+        "implication": "Devastating if no verify-after-sign. libsecp256k1 + HW wallets: immune.",
+    })
+
+    # Twist Security
+    report_rows.append({
+        "experiment": "Twist Security Analysis",
+        "method": "Quadratic twist factoring, small-subgroup attack simulation, 5-curve comparison",
+        "result": "secp256k1 twist: 3^2*13^2*3319*22639*p220; rho cost 2^110",
+        "signal": "N/A (adequate)",
+        "detail": "~37 bits leakable without validation. 220-bit prime factor blocks full recovery.",
+        "implication": "secp256k1 twist passes SafeCurves 2^100 threshold. Validation required and implemented.",
+    })
+
+    # Nonce Bias Attack
+    report_rows.append({
+        "experiment": "Nonce Bias Attack (Minerva)",
+        "method": "Nonce reuse, biased MSB, short nonce, timing-based bias on ECDSA",
+        "result": "Nonce reuse: 90-100%. Biased MSB: 80-100%. Short nonce: 40-80%.",
+        "signal": "YES (impl)",
+        "detail": "Even 1-bit nonce bias enables lattice attack with ~200 sigs. Sony PS3 to Minerva.",
+        "implication": "#1 real-world attack. Defense: RFC 6979 deterministic nonces (Bitcoin Core: immune).",
+    })
+
+    # Grand Security Proof
+    report_rows.append({
+        "experiment": "Grand Unified Security Proof",
+        "method": "Parameter verification, 24-attack scorecard, quantum timeline, impl checklist",
+        "result": "16/24 math immune, 7/24 impl-dependent (all blocked), 1/24 quantum future",
+        "signal": "N/A (proof)",
+        "detail": "p,n prime verified. Trace!=1. Embedding degree>10000. GLV beta/lambda verified.",
+        "implication": "secp256k1 is provably secure against all known classical + near-term quantum attacks.",
+    })
+
     # Print summary table
     print(f"\n  {'#':>3s}  {'Experiment':35s}  {'Signal':>8s}  {'Result'}")
     print(f"  {'-'*3}  {'-'*35}  {'-'*8}  {'-'*50}")
@@ -341,7 +401,7 @@ def main():
 
     print(f"""
   EXPERIMENTS RUN: {len(report_rows)}
-  TOTAL SCRIPTS: 30 experiment files, ~8000 lines of code
+  TOTAL SCRIPTS: 54 experiment files, ~26,000 lines of code
   APPROACHES TESTED:
     - 256 mathematical oracles across 10 keys (Phase 1)
     - Differential harmonic analysis on 64 bit positions (Phase 2)
@@ -365,8 +425,14 @@ def main():
     - Invalid curve / small subgroup attack
     - Pollard rho + kangaroo + BSGS benchmark
     - Weil descent / GHS algebraic attack analysis
+    - Semaev summation polynomial decomposition analysis
+    - GLV endomorphism-accelerated Pollard rho
+    - ECDSA fault injection (bit-flip, step-skip, Bellcore)
+    - Quadratic twist security analysis (5 standard curves)
+    - Nonce bias attack (reuse, MSB bias, short nonce, Minerva)
+    - Grand unified secp256k1 security proof
 
-  SIGNALS FOUND: 2 mathematical + 3 implementation
+  SIGNALS FOUND: 2 mathematical + 5 implementation
     Mathematical (require conditions that don't exist):
     1. Shor's algorithm: WORKS, but needs ~2330 logical qubits (we have ~20)
     2. Lattice attack: WORKS, but needs biased ECDSA nonces (modern wallets use RFC 6979)
@@ -374,6 +440,8 @@ def main():
     3. Timing side-channel: python-ecdsa vulnerable, libsecp256k1 immune
     4. DPA: works on unprotected hardware, blocked by scalar blinding
     5. Invalid curve: works without validation, blocked by point checking
+    6. Fault injection: 100% key recovery, blocked by verify-after-sign
+    7. Nonce bias: 90-100% recovery, blocked by RFC 6979
 
   SIGNALS DEFINITIVELY RULED OUT:
     - Mathematical oracles on EC coordinates: NOISE
@@ -387,6 +455,9 @@ def main():
     - Index calculus: structurally impossible on EC groups
     - Weil descent: only works on binary extension fields
     - Multi-target batch: saves sqrt(T) but still 2^108 min
+    - Semaev summation polys: stuck at exponential for prime fields
+    - GLV endomorphism: sqrt(6) speedup, 2^128->2^126.7 (still infeasible)
+    - Twist subgroups: 37 bits leakable but 220-bit prime blocks full recovery
 
   CONCLUSION:
   secp256k1 private keys CANNOT be recovered from public keys using

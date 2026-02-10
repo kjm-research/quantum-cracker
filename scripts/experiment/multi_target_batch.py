@@ -15,13 +15,14 @@ This script implements multi-target Pollard rho with distinguished
 points on small EC curves.
 """
 
+import csv
 import math
+import os
 import secrets
 import sys
 import time
 
 import numpy as np
-from scipy import stats
 
 sys.path.insert(0, "src")
 
@@ -112,6 +113,40 @@ class SmallEC:
         return result
 
 
+def _prime_factors(n):
+    """Return the set of distinct prime factors of n."""
+    factors = set()
+    d = 2
+    while d * d <= n:
+        while n % d == 0:
+            factors.add(d)
+            n //= d
+        d += 1
+    if n > 1:
+        factors.add(n)
+    return factors
+
+
+def _divisors(n):
+    """Return all positive divisors of n."""
+    divs = set()
+    for i in range(1, int(n**0.5) + 1):
+        if n % i == 0:
+            divs.add(i)
+            divs.add(n // i)
+    return divs
+
+
+def _subgroup_order(ec, G):
+    """Compute the order of point G in the group."""
+    n = ec.order
+    divs = sorted(_divisors(n))
+    for d in divs:
+        if d > 0 and ec.multiply(G, d) is None:
+            return d
+    return n
+
+
 def is_distinguished(point, threshold_bits):
     """A point is 'distinguished' if its x-coordinate has
     `threshold_bits` trailing zeros."""
@@ -120,67 +155,153 @@ def is_distinguished(point, threshold_bits):
     return (point[0] & ((1 << threshold_bits) - 1)) == 0
 
 
-def single_target_rho(ec, G, Q, max_ops):
-    """Standard Pollard rho for single target."""
-    n = ec.order - 1
+def single_target_rho(ec, G, Q, max_ops, group_order=None):
+    """Pollard's rho for single-target ECDLP with Floyd's cycle detection.
+
+    Uses the correct subgroup order (not ec.order - 1) and handles
+    non-prime group orders via GCD-based collision resolution.
+    Adapted from pollard_rho_kangaroo_fixed.py.
+    """
+    if group_order is None:
+        group_order = _subgroup_order(ec, G)
+    n = group_order
     if n <= 1:
         return 0, 0
+    if Q is None:
+        return 0, 0
+    if Q == G:
+        return 1, 0
+
+    total_ops = 0
+    max_restarts = 5
+    max_iter_per_restart = max(max_ops // max_restarts, 4 * int(math.isqrt(n)) + 100)
 
     def partition(P):
-        if P is None: return 0
+        if P is None:
+            return 0
         return P[0] % 3
 
     def step(R, a, b):
         s = partition(R)
         if s == 0:
-            return ec.add(R, Q), a, (b + 1) % n
+            R = ec.add(R, Q)
+            b = (b + 1) % n
         elif s == 1:
-            return ec.add(R, R), (a * 2) % n, (b * 2) % n
+            R = ec.add(R, R)
+            a = (a * 2) % n
+            b = (b * 2) % n
         else:
-            return ec.add(R, G), (a + 1) % n, b
+            R = ec.add(R, G)
+            a = (a + 1) % n
+        return R, a, b
 
-    a1, b1 = secrets.randbelow(max(n, 1)), secrets.randbelow(max(n, 1))
-    R1 = ec.add(ec.multiply(G, a1), ec.multiply(Q, b1))
-    a2, b2, R2 = a1, b1, R1
-    ops = 0
+    for restart in range(max_restarts):
+        a0 = secrets.randbelow(n) if n > 1 else 0
+        b0 = secrets.randbelow(n) if n > 1 else 0
+        if a0 == 0 and b0 == 0:
+            a0 = 1
+        R0 = ec.add(ec.multiply(G, a0), ec.multiply(Q, b0))
+        total_ops += 2
 
-    for _ in range(max_ops):
-        R1, a1, b1 = step(R1, a1, b1)
-        ops += 1
-        R2, a2, b2 = step(R2, a2, b2)
-        R2, a2, b2 = step(R2, a2, b2)
-        ops += 2
+        a_t, b_t, R_t = a0, b0, R0
+        a_h, b_h, R_h = a0, b0, R0
 
-        if R1 == R2:
-            db = (b2 - b1) % n
-            if db == 0:
-                # Restart
-                a1 = secrets.randbelow(max(n, 1))
-                b1 = secrets.randbelow(max(n, 1))
-                R1 = ec.add(ec.multiply(G, a1), ec.multiply(Q, b1))
-                a2, b2, R2 = a1, b1, R1
-                continue
-            da = (a1 - a2) % n
-            try:
-                k = (da * pow(db, -1, n)) % n
-            except (ValueError, ZeroDivisionError):
-                continue
+        for iteration in range(max_iter_per_restart):
+            R_t, a_t, b_t = step(R_t, a_t, b_t)
+            total_ops += 1
+            R_h, a_h, b_h = step(R_h, a_h, b_h)
+            R_h, a_h, b_h = step(R_h, a_h, b_h)
+            total_ops += 2
+
+            if R_t == R_h:
+                # Collision: a_t*G + b_t*Q = a_h*G + b_h*Q
+                # => k = (a_t - a_h) / (b_h - b_t) mod n
+                db = (b_h - b_t) % n
+                da = (a_t - a_h) % n
+
+                if db == 0:
+                    break  # useless collision, restart
+
+                g = math.gcd(db, n)
+                if g == 1:
+                    try:
+                        db_inv = pow(db, -1, n)
+                        k = (da * db_inv) % n
+                        if ec.multiply(G, k) == Q:
+                            return k, total_ops
+                    except (ValueError, ZeroDivisionError):
+                        break
+                else:
+                    # gcd > 1: try all g possible solutions
+                    if da % g != 0:
+                        break
+                    da_red = da // g
+                    db_red = db // g
+                    n_red = n // g
+                    try:
+                        db_red_inv = pow(db_red, -1, n_red)
+                    except (ValueError, ZeroDivisionError):
+                        break
+                    base_k = (da_red * db_red_inv) % n_red
+                    for j in range(g):
+                        k_candidate = (base_k + j * n_red) % n
+                        if ec.multiply(G, k_candidate) == Q:
+                            return k_candidate, total_ops
+                    break
+
+    return None, total_ops
+
+
+def _try_extract_dlog(ec, G, Q, da, db, n):
+    """Try to extract discrete log k from collision da*G = db*Q mod n.
+
+    Handles both prime and composite group orders via GCD resolution.
+    Returns k if found, else None.
+    """
+    if db == 0:
+        return None
+
+    g = math.gcd(db, n)
+    if g == 1:
+        try:
+            db_inv = pow(db, -1, n)
+            k = (da * db_inv) % n
             if ec.multiply(G, k) == Q:
-                return k, ops
+                return k
+        except (ValueError, ZeroDivisionError):
+            return None
+    else:
+        if da % g != 0:
+            return None
+        da_red = da // g
+        db_red = db // g
+        n_red = n // g
+        try:
+            db_red_inv = pow(db_red, -1, n_red)
+        except (ValueError, ZeroDivisionError):
+            return None
+        base_k = (da_red * db_red_inv) % n_red
+        for j in range(g):
+            k_candidate = (base_k + j * n_red) % n
+            if ec.multiply(G, k_candidate) == Q:
+                return k_candidate
+    return None
 
-    return None, ops
 
-
-def multi_target_rho(ec, G, targets, max_ops):
+def multi_target_rho(ec, G, targets, max_ops, group_order=None):
     """Multi-target Pollard rho with distinguished points.
 
     Walk randomly in the group. At distinguished points, store (point, a, b).
-    When a walk for target_i hits a stored distinguished point,
-    we can solve target_i's DLP.
+    When two walks for the same target collide at a distinguished point,
+    we extract the DLP from the collision.
+
+    Uses the correct subgroup order and GCD-aware collision resolution.
 
     targets: list of (Q_i, k_i) where Q_i = k_i * G
     """
-    n = ec.order - 1
+    if group_order is None:
+        group_order = _subgroup_order(ec, G)
+    n = group_order
     if n <= 1:
         return {}, 0
 
@@ -189,20 +310,24 @@ def multi_target_rho(ec, G, targets, max_ops):
     # Distinguished point threshold: ~sqrt(n/T) steps between DPs
     dp_bits = max(1, int(math.log2(max(n, 2)) / 2 - math.log2(max(T, 1)) / 2))
 
-    # Storage for distinguished points
-    dp_store = {}  # point -> (walk_id, a, b)
+    # Storage for distinguished points, keyed by (target_index, point)
+    dp_store = {}  # (target_i, point_key) -> (a, b)
 
-    # Initialize one walk per target
+    # Initialize multiple walks per target for better collision probability
+    n_walks_per_target = max(2, int(math.sqrt(T)) + 1)
     walks = []
-    target_map = {}  # target index -> Q
+    target_map = {}
     solved = {}
 
     for i, (Q_i, _) in enumerate(targets):
-        a = secrets.randbelow(max(n, 1))
-        b = secrets.randbelow(max(n, 1))
-        R = ec.add(ec.multiply(G, a), ec.multiply(Q_i, b))
-        walks.append((R, a, b, i))
         target_map[i] = Q_i
+        for _ in range(n_walks_per_target):
+            a = secrets.randbelow(max(n, 1))
+            b = secrets.randbelow(max(n, 1))
+            if a == 0 and b == 0:
+                a = 1
+            R = ec.add(ec.multiply(G, a), ec.multiply(Q_i, b))
+            walks.append((R, a, b, i))
 
     ops = 0
 
@@ -212,8 +337,9 @@ def multi_target_rho(ec, G, targets, max_ops):
             if target_i in solved:
                 continue
 
-            # Take one step
             Q_i = target_map[target_i]
+
+            # Take one step (3-partition random walk)
             if R is None:
                 s = 0
             else:
@@ -233,29 +359,23 @@ def multi_target_rho(ec, G, targets, max_ops):
 
             # Check if distinguished
             if is_distinguished(R_new, dp_bits):
-                key = R_new if R_new is not None else "inf"
+                point_key = R_new if R_new is not None else "inf"
+                store_key = (target_i, point_key)
 
-                if key in dp_store:
-                    # Collision! Try to solve
-                    stored_target, sa, sb = dp_store[key]
+                if store_key in dp_store:
+                    # Two walks for the SAME target reached the same DP
+                    sa, sb = dp_store[store_key]
 
-                    if stored_target == target_i:
-                        # Same target, same walk -- try to extract DLP
-                        db = (sb - b_new) % n
-                        if db != 0:
-                            da = (a_new - sa) % n
-                            try:
-                                k = (da * pow(db, -1, n)) % n
-                            except (ValueError, ZeroDivisionError):
-                                pass
-                            else:
-                                if ec.multiply(G, k) == target_map[target_i]:
-                                    solved[target_i] = k
-                    else:
-                        # Different targets sharing a point -- also potentially useful
-                        pass
+                    # Collision: a_new*G + b_new*Q = sa*G + sb*Q
+                    # => (a_new - sa)*G = (sb - b_new)*Q
+                    da = (a_new - sa) % n
+                    db = (sb - b_new) % n
 
-                dp_store[key] = (target_i, a_new, b_new)
+                    k = _try_extract_dlog(ec, G, Q_i, da, db, n)
+                    if k is not None:
+                        solved[target_i] = k
+
+                dp_store[store_key] = (a_new, b_new)
 
             new_walks.append((R_new, a_new, b_new, target_i))
 
@@ -297,50 +417,62 @@ def main():
         ec = SmallEC(p_val, 0, 7)
         N = ec.order
         G = ec.generator
-        n = N - 1
 
         if G is None or N <= 2:
             continue
 
-        max_ops = n * 10
+        group_ord = _subgroup_order(ec, G)
+        max_ops = group_ord * 10
 
-        # Generate targets
+        # Generate targets using the correct subgroup order
         targets = []
         for _ in range(n_targets):
-            k = secrets.randbelow(n - 1) + 1
+            k = secrets.randbelow(group_ord - 1) + 1
             Q = ec.multiply(G, k)
             targets.append((Q, k))
 
         # Single-target baseline
         if n_targets == 1:
             t0 = time.time()
-            k_found, ops = single_target_rho(ec, G, targets[0][0], max_ops)
+            k_found, ops = single_target_rho(
+                ec, G, targets[0][0], max_ops, group_order=group_ord
+            )
             dt = (time.time() - t0) * 1000
-            correct = k_found == targets[0][1] if k_found is not None else False
-            print(f"\n  p={p_val}, T=1 (single): ops={ops:,d}, "
-                  f"correct={correct}, {dt:.1f}ms")
+            # Verify: k_found might differ from targets[0][1] but still be correct
+            # (equivalent discrete logs modulo group order)
+            correct = (k_found is not None and ec.multiply(G, k_found) == targets[0][0])
+            print(f"\n  p={p_val}, |E|={N}, gen_order={group_ord}, T=1 (single): "
+                  f"ops={ops:,d}, correct={correct}, {dt:.1f}ms")
             results.append({
-                "prime": p_val, "order": N, "n_targets": 1,
-                "ops_total": ops, "ops_per_target": ops,
-                "solved": 1 if correct else 0,
+                "prime": p_val, "order": N, "gen_order": group_ord,
+                "n_targets": 1, "ops_total": ops, "ops_per_target": ops,
+                "solved": 1 if correct else 0, "n_targets_total": 1,
             })
             continue
 
         # Multi-target
         t0 = time.time()
-        solved, ops = multi_target_rho(ec, G, targets, max_ops)
+        solved, ops = multi_target_rho(
+            ec, G, targets, max_ops, group_order=group_ord
+        )
         dt = (time.time() - t0) * 1000
 
-        n_solved = sum(1 for i, (_, k) in enumerate(targets) if solved.get(i) == k)
+        # Count correctly solved (verify via point multiplication, not just key equality)
+        n_solved = 0
+        for i, (Q_i, _) in enumerate(targets):
+            if i in solved and ec.multiply(G, solved[i]) == Q_i:
+                n_solved += 1
         ops_per = ops / max(n_solved, 1)
 
-        print(f"  p={p_val}, T={n_targets}: ops={ops:,d}, solved={n_solved}/{n_targets}, "
+        print(f"  p={p_val}, |E|={N}, gen_order={group_ord}, T={n_targets}: "
+              f"ops={ops:,d}, solved={n_solved}/{n_targets}, "
               f"ops/target={ops_per:,.0f}, {dt:.1f}ms")
 
         results.append({
-            "prime": p_val, "order": N, "n_targets": n_targets,
-            "ops_total": ops, "ops_per_target": int(ops_per),
-            "solved": n_solved,
+            "prime": p_val, "order": N, "gen_order": group_ord,
+            "n_targets": n_targets, "ops_total": ops,
+            "ops_per_target": int(ops_per),
+            "solved": n_solved, "n_targets_total": n_targets,
         })
 
     # ================================================================
@@ -394,6 +526,19 @@ def main():
   - At 1 MHz gate speed: ~570 years for ALL Bitcoin keys
   - At 1 GHz gate speed: ~7 months for ALL Bitcoin keys
     """)
+    # ================================================================
+    # WRITE CSV
+    # ================================================================
+    csv_path = os.path.expanduser("~/Desktop/multi_target_batch.csv")
+    if results:
+        fieldnames = ["prime", "order", "gen_order", "n_targets",
+                      "ops_total", "ops_per_target", "solved", "n_targets_total"]
+        with open(csv_path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+            w.writerows(results)
+        print(f"\n  Results written to {csv_path}")
+
     print("=" * 78)
 
 

@@ -564,11 +564,15 @@ STANDARD_CURVES = [
     ("K-283",        "binary", "F_2",   283,  283, "Deprecated (NIST 2023)"),
     ("K-409",        "binary", "F_2",   409,  409, "Deprecated (NIST 2023)"),
     ("K-571",        "binary", "F_2",   571,  571, "Deprecated (NIST 2023)"),
-    # Historical binary curves with composite extension degree (worst case)
-    ("sect131r1",    "binary", "F_2",   131,  131, "Removed (composite n)"),
+    # Other SEC/historical binary curves
+    ("sect131r1",    "binary", "F_2",   131,  131, "Removed (small field)"),
     ("sect163k1",    "binary", "F_2",   163,  163, "Deprecated"),
-    ("sect239k1",    "binary", "F_2",   239,  239, "Removed (composite n)"),
-    ("sect113r1",    "binary", "F_2",   113,  113, "Removed (composite n)"),
+    ("sect239k1",    "binary", "F_2",   239,  239, "Removed (non-standard)"),
+    ("sect113r1",    "binary", "F_2",   113,  113, "Removed (small field)"),
+    # Hypothetical composite-n curves (these illustrate the GHS risk)
+    ("hyp F_{2^176}","binary", "F_2",   176,  176, "Hypothetical (composite n=176=16x11)"),
+    ("hyp F_{2^272}","binary", "F_2",   272,  272, "Hypothetical (composite n=272=16x17)"),
+    ("hyp F_{2^155}","binary", "F_2",   155,  155, "Hypothetical (composite n=155=5x31)"),
 ]
 
 
@@ -591,13 +595,13 @@ def analyze_standard_curves():
             rho_bits = bits / 2.0
             ghs_bits = index_calculus_complexity(best_genus, 2)
             vulnerable = "YES" if ghs_bits < rho_bits else "NO"
-            if ext_deg in (131, 239, 113):
-                # These have composite extension degree
-                reason = f"Composite n={ext_deg}, genus reducible"
-            elif all(ext_deg % d != 0 for d in range(2, ext_deg)):
+            n_is_prime = is_prime(ext_deg)
+            if n_is_prime:
                 reason = f"Prime n={ext_deg}, genus too large"
+            elif not n_is_prime and ghs_bits < rho_bits:
+                reason = f"Composite n={ext_deg}, genus reducible -- VULNERABLE"
             else:
-                reason = f"n={ext_deg}, genus analysis required"
+                reason = f"Composite n={ext_deg}, but genus still too large"
 
         results.append({
             "curve": name,
@@ -701,7 +705,8 @@ def main():
         # For display: use scientific notation for huge genus
         wg_str = f"2^{int(math.log2(wg))}" if wg > 1000 else str(wg)
         bg_str = f"2^{int(math.log2(bg))}" if bg > 1000 else str(bg)
-        print(f"  {n:>5d}  {'yes':>7s if p else 'no':>7s}  {wg_str:>14s}  {bg_str:>14s}  "
+        p_str = "yes" if p else "no"
+        print(f"  {n:>5d}  {p_str:>7s}  {wg_str:>14s}  {bg_str:>14s}  "
               f"{rho:>10.1f}  {ghs:>10.1f}  {useful:>12s}")
 
     print(f"\n  Historically used composite extension degrees:")
@@ -723,7 +728,8 @@ def main():
         factor_str = ", ".join(factor_strs) if factor_strs else "prime"
 
         bg_str = f"2^{int(math.log2(bg))}" if bg > 1000 else str(bg)
-        print(f"  {n:>5d}  {'yes' if p else 'no':>7s}  {factor_str:>18s}  {bg_str:>14s}  "
+        p_str = "yes" if p else "no"
+        print(f"  {n:>5d}  {p_str:>7s}  {factor_str:>18s}  {bg_str:>14s}  "
               f"{rho:>10.1f}  {ghs:>10.1f}  {useful:>12s}")
 
     # ================================================================
