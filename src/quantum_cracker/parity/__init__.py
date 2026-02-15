@@ -13,6 +13,8 @@ from quantum_cracker.parity.types import (
     DynamicsSnapshot,
     OracleResult,
     ParityConfig,
+    SQAResult,
+    SQASchedule,
 )
 
 __all__ = [
@@ -21,4 +23,6 @@ __all__ = [
     "DynamicsSnapshot",
     "OracleResult",
     "ParityConfig",
+    "SQAResult",
+    "SQASchedule",
 ]

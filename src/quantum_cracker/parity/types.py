@@ -70,3 +70,32 @@ class OracleResult:
     parity_distribution: dict[int, int] = field(default_factory=dict)
     best_energy: float = 0.0
     best_configuration: NDArray[np.int8] | None = None
+
+
+@dataclass
+class SQASchedule:
+    """Schedule for Simulated Quantum Annealing (Suzuki-Trotter)."""
+
+    n_steps: int = 1000
+    gamma_initial: float = 4.0       # transverse field start (large = quantum)
+    gamma_final: float = 0.01        # transverse field end (near zero = classical)
+    beta_initial: float = 0.5        # inverse temperature start (low = hot)
+    beta_final: float = 20.0         # inverse temperature end (high = cold)
+    n_replicas: int = 32             # Trotter slices (imaginary time)
+    parity_weighted: bool = True     # PDQM parity-dependent J_perp
+
+
+@dataclass
+class SQAResult:
+    """Result from Simulated Quantum Annealing."""
+
+    final_replicas: list[NDArray[np.int8]]
+    final_energies: list[float]
+    best_spins: NDArray[np.int8]
+    best_energy: float
+    best_replica: int
+    extracted_key: int
+    bit_match_rate: float | None = None
+    replica_agreement: float = 0.0   # fraction of bits unanimous across replicas
+    n_parity_flips: int = 0
+    trajectory: list[DynamicsSnapshot] = field(default_factory=list)

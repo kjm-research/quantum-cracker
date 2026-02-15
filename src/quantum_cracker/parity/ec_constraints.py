@@ -395,6 +395,19 @@ class ECEnergyEvaluator:
         self.flip_single(bit_a)
         return self.flip_single(bit_b)
 
+    def copy(self) -> "ECEnergyEvaluator":
+        """Create a copy with shared precomputed data but independent state."""
+        ev = ECEnergyEvaluator.__new__(ECEnergyEvaluator)
+        ev.curve = self.curve
+        ev.generator = self.generator
+        ev.public_key = self.public_key
+        ev.n_bits = self.n_bits
+        ev.power_points = self.power_points
+        ev.neg_power_points = self.neg_power_points
+        ev._current_point = self._current_point
+        ev._current_key = self._current_key
+        return ev
+
     def peek_flip_single(self, bit_idx: int) -> float:
         """Check what penalty would be after flipping bit, without changing state."""
         was_set = (self._current_key >> bit_idx) & 1
