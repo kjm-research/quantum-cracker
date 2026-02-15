@@ -51,6 +51,7 @@
 - [x] SHA-256 partial input attack (known padding exploitation)
 - [x] EC trace reversibility (side-channel attack model)
 - [x] Information smearing analysis (grand consolidation of reverse attempts)
+- [x] SQA information theory integration (all 3 attacks through quantum annealer)
 
 ---
 
@@ -70,3 +71,4 @@
 | 2026-02-14 | SHA-256 partial input attack | 31/64 input bytes known, ~2% speedup, MI classification |
 | 2026-02-14 | EC trace reversibility | 100% key recovery from trace, MI math / ID physical |
 | 2026-02-14 | Information smearing analysis | 12 reverse-fire + 10 prediction + DNA extraction, all MI |
+| 2026-02-14 | SQA information theory | All 3 attacks through SQA engine, flat energy landscape confirmed |
