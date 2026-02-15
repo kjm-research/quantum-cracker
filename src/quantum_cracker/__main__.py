@@ -7,6 +7,8 @@ import csv
 import os
 from datetime import datetime
 
+import numpy as np
+
 from quantum_cracker import __version__
 from quantum_cracker.core.harmonic_compiler import HarmonicCompiler
 from quantum_cracker.core.key_interface import KeyInput
@@ -35,6 +37,16 @@ def build_parser() -> argparse.ArgumentParser:
     sim.add_argument("--no-viz", action="store_true", help="Skip plot generation")
     sim.add_argument("--csv", action="store_true", help="Export results CSV to ~/Desktop")
     sim.add_argument("--sh-filter", action="store_true", help="Apply SH filter during compilation")
+
+    # parity
+    par = sub.add_parser("parity", help="Parity-driven ECDLP via Ising Hamiltonian")
+    par.add_argument("--curve-bits", type=int, default=8, help="EC curve size in bits (default 8)")
+    par.add_argument("--trajectories", type=int, default=100, help="Annealing trajectories")
+    par.add_argument("--anneal-steps", type=int, default=500, help="Steps per anneal trajectory")
+    par.add_argument("--beta-final", type=float, default=20.0, help="Final inverse temperature")
+    par.add_argument("--delta-e", type=float, default=2.0, help="Parity energy gap")
+    par.add_argument("--csv", action="store_true", help="Export results CSV to ~/Desktop")
+    par.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
 
     # visualize
     viz = sub.add_parser("visualize", help="Launch 3D renderer with live resonance")
@@ -208,12 +220,128 @@ def run_visualize(args: argparse.Namespace) -> None:
     renderer.run()
 
 
+def run_parity(args: argparse.Namespace) -> None:
+    """Parity-driven ECDLP: Ising Hamiltonian + parity dynamics."""
+    from quantum_cracker.parity.ec_constraints import SmallEC
+    from quantum_cracker.parity.hamiltonian import ParityHamiltonian
+    from quantum_cracker.parity.oracle import ParityOracle
+    from quantum_cracker.parity.types import AnnealSchedule, ParityConfig
+
+    seed = args.seed if args.seed is not None else 42
+    rng = np.random.default_rng(seed)
+
+    # Pick a curve with approximately the right bit size
+    curve_primes = [97, 251, 509, 1021, 2039, 4093, 8191, 16381, 32749, 65521]
+    target_bits = args.curve_bits
+    p = 97
+    for cp in curve_primes:
+        if cp.bit_length() >= target_bits:
+            p = cp
+            break
+    else:
+        p = curve_primes[-1]
+
+    curve = SmallEC(p, 0, 7)
+    G = curve.generator
+    k, P = curve.random_keypair(rng)
+    n_bits = curve.key_bit_length()
+
+    print(f"Curve: y^2 = x^3 + 7 over F_{p}")
+    print(f"Order: {curve.order} ({n_bits} bits)")
+    print(f"Generator: {G}")
+    print(f"Private key: {k}")
+    print(f"Public key: {P}")
+    print()
+
+    config = ParityConfig(
+        n_spins=n_bits,
+        delta_e=args.delta_e,
+        j_coupling=0.1,
+        t1_base=0.05,
+        t2=1.0,
+        mode="exact",
+        constraint_weight=20.0,
+    )
+
+    print("Building parity Hamiltonian...")
+    h = ParityHamiltonian.from_ec_dlp(curve, G, P, config)
+
+    # Verify ground state
+    gs_key = h.ground_state_key()
+    gs_point = curve.multiply(G, gs_key)
+    print(f"Hamiltonian ground state key: {gs_key}")
+    print(f"Ground state -> {gs_key}*G = {gs_point}")
+    print(f"Matches public key: {gs_point == P}")
+    print()
+
+    # Run oracle
+    print(f"Running parity oracle ({args.trajectories} trajectories, {args.anneal_steps} steps)...")
+    oracle = ParityOracle(h, config)
+    schedule = AnnealSchedule(
+        n_steps=args.anneal_steps,
+        beta_initial=0.1,
+        beta_final=args.beta_final,
+    )
+    result = oracle.measure(
+        n_trajectories=args.trajectories,
+        schedule=schedule,
+        target_key=k,
+        rng=rng,
+    )
+
+    match_rate = oracle.bit_match_rate(result, k)
+    extracted_key = oracle.extract_key(result)
+
+    print()
+    print("=" * 50)
+    print(" PARITY ORACLE RESULTS")
+    print("=" * 50)
+    print(f"  True key:            {k}")
+    print(f"  Extracted key:       {extracted_key}")
+    print(f"  Bit match rate:      {match_rate:.4f}")
+    print(f"  Mean confidence:     {float(result.bit_confidences.mean()):.4f}")
+    print(f"  Best energy:         {result.best_energy:.4f}")
+    print(f"  Mean energy:         {result.mean_energy:.4f}")
+    print(f"  Parity distribution: even={result.parity_distribution.get(1, 0)}, odd={result.parity_distribution.get(-1, 0)}")
+    print(f"  Key recovered:       {extracted_key == k}")
+    print("=" * 50)
+
+    if args.csv:
+        desktop = os.path.expanduser("~/Desktop")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filepath = os.path.join(desktop, f"parity_ecdlp_{timestamp}.csv")
+
+        with open(filepath, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["metric", "value"])
+            writer.writerow(["curve_p", p])
+            writer.writerow(["curve_order", curve.order])
+            writer.writerow(["n_bits", n_bits])
+            writer.writerow(["true_key", k])
+            writer.writerow(["extracted_key", extracted_key])
+            writer.writerow(["bit_match_rate", match_rate])
+            writer.writerow(["mean_confidence", float(result.bit_confidences.mean())])
+            writer.writerow(["best_energy", result.best_energy])
+            writer.writerow(["mean_energy", result.mean_energy])
+            writer.writerow(["parity_even", result.parity_distribution.get(1, 0)])
+            writer.writerow(["parity_odd", result.parity_distribution.get(-1, 0)])
+            writer.writerow(["key_recovered", extracted_key == k])
+            writer.writerow(["n_trajectories", args.trajectories])
+            writer.writerow(["anneal_steps", args.anneal_steps])
+            writer.writerow(["delta_e", args.delta_e])
+            writer.writerow(["beta_final", args.beta_final])
+
+        print(f"Results exported to {filepath}")
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
     if args.command == "simulate":
         run_simulation(args)
+    elif args.command == "parity":
+        run_parity(args)
     elif args.command == "visualize":
         run_visualize(args)
     else:

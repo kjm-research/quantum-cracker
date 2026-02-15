@@ -26,3 +26,11 @@ OBSERVABLE_THRESHOLD_M: float = OBSERVABLE_THRESHOLD_NM * 1e-9
 # -- Derived --
 GRID_VOXEL_COUNT: int = GRID_SIZE ** 3  # 474,552
 GOLDEN_RATIO: float = (1.0 + np.sqrt(5.0)) / 2.0
+
+# -- Parity dynamics (PDQM) --
+PARITY_ENERGY_GAP: float = 1.0  # Delta_E in natural units
+ISING_COUPLING: float = 0.2  # J nearest-neighbor coupling
+BASE_HOPPING_T1: float = 0.1  # t1_0 single-particle hopping
+PAIR_HOPPING_T2: float = 1.0  # t2 pair hopping (unsuppressed)
+ANCHORING_COUPLING: float = 0.5  # kappa anchoring strength
+BOLTZMANN_K: float = 1.380649e-23  # J/K
