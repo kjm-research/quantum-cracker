@@ -37,6 +37,9 @@ class HarmonicCompiler:
         self.time: float = 0.0
         self.peaks: list[Peak] = []
         self._vibration_cache: NDArray[np.float64] | None = None
+        self._sh_filter_cache: dict[
+            int, list[tuple[int, NDArray[np.float64]]]
+        ] = {}
 
     def _build_vibration_field(self, t: float) -> NDArray[np.float64]:
         """Compute the resonance vibration field at time t.
@@ -68,6 +71,26 @@ class HarmonicCompiler:
         self.grid.amplitude *= 1.0 + vibration * strength
         self.grid.energy = np.abs(self.grid.amplitude) ** 2
 
+    def _get_sh_filter_basis(
+        self, l_target: int
+    ) -> list[tuple[int, NDArray[np.float64]]]:
+        """Return cached SH basis functions for a given target degree.
+
+        Precomputes and caches Y_{l_target, m} for all valid m on the
+        grid's angular coordinates.
+        """
+        if l_target not in self._sh_filter_cache:
+            theta = self.grid.theta_coords
+            phi = self.grid.phi_coords
+            theta_grid, phi_grid = np.meshgrid(theta, phi, indexing="ij")
+
+            basis_functions: list[tuple[int, NDArray[np.float64]]] = []
+            for m in range(-l_target, l_target + 1):
+                ylm = sph_harm_y(l_target, m, theta_grid, phi_grid).real
+                basis_functions.append((m, ylm))
+            self._sh_filter_cache[l_target] = basis_functions
+        return self._sh_filter_cache[l_target]
+
     def apply_spherical_harmonic_filter(self, l_target: int = SH_DEGREE) -> None:
         """Filter grid through spherical harmonics, keeping only degree l_target.
 
@@ -85,12 +108,8 @@ class HarmonicCompiler:
         dphi = phi[1] - phi[0] if len(phi) > 1 else 1.0
         weight = np.sin(theta_grid) * dtheta * dphi
 
-        # Precompute basis functions for degree l_target
-        basis_functions = []
-        for m in range(-l_target, l_target + 1):
-            if abs(m) <= l_target:
-                ylm = sph_harm_y(l_target, m, theta_grid, phi_grid).real
-                basis_functions.append((m, ylm))
+        # Use cached basis functions for degree l_target
+        basis_functions = self._get_sh_filter_basis(l_target)
 
         # For each radial shell, project and reconstruct
         for ir in range(self.grid.size):

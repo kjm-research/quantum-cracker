@@ -45,7 +45,7 @@
 ## Phase 6: Polish
 - [ ] CI/CD pipeline
 - [ ] Type annotations + mypy clean
-- [ ] Performance optimization (precomputed SH basis)
+- [x] Performance optimization (precomputed SH basis)
 
 ## Phase 7: Information Theory Attacks
 - [x] SHA-256 partial input attack (known padding exploitation)

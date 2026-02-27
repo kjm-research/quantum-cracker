@@ -6,10 +6,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.special import sph_harm_y
-
 from quantum_cracker.utils.constants import GRID_SIZE
-from quantum_cracker.utils.math_helpers import spherical_to_cartesian
+from quantum_cracker.utils.math_helpers import precompute_sh_values, spherical_to_cartesian
 
 if TYPE_CHECKING:
     from quantum_cracker.core.key_interface import KeyInput
@@ -35,8 +33,9 @@ class SphericalVoxelGrid:
         self.phase = np.zeros((size, size, size), dtype=np.float64)
         self.energy = np.zeros((size, size, size), dtype=np.float64)
 
-        # Cache
+        # Caches
         self._cartesian_cache: NDArray[np.float64] | None = None
+        self._sh_cache: dict[int, dict[tuple[int, int], NDArray[np.float64]]] = {}
 
     def initialize_from_key(self, key: KeyInput) -> None:
         """Set initial grid state from a 256-bit key."""
@@ -77,6 +76,24 @@ class SphericalVoxelGrid:
             "phi": float(self.phi_coords[iphi]),
         }
 
+    def _get_sh_values(
+        self, l_max: int
+    ) -> dict[tuple[int, int], NDArray[np.float64]]:
+        """Return precomputed SH values for the angular grid up to degree l_max.
+
+        Results are cached per l_max since the angular grid is fixed for the
+        lifetime of this grid instance.
+        """
+        if l_max not in self._sh_cache:
+            theta_grid, phi_grid = np.meshgrid(
+                self.theta_coords, self.phi_coords, indexing="ij"
+            )
+            effective_l = min(l_max, self.size - 1)
+            self._sh_cache[l_max] = precompute_sh_values(
+                theta_grid, phi_grid, effective_l
+            )
+        return self._sh_cache[l_max]
+
     def decompose_spherical_harmonics(
         self, l_max: int = 78
     ) -> NDArray[np.float64]:
@@ -102,9 +119,11 @@ class SphericalVoxelGrid:
         dphi = phi[1] - phi[0] if len(phi) > 1 else 1.0
         weight = np.sin(theta_grid) * dtheta * dphi
 
+        sh_values = self._get_sh_values(l_max)
+
         for degree in range(min(l_max + 1, self.size)):
             for m in range(-degree, degree + 1):
-                ylm = sph_harm_y(degree, m, theta_grid, phi_grid).real
+                ylm = sh_values[(degree, m)]
                 for ir in range(self.size):
                     shell = self.amplitude[ir, :, :]
                     coeffs[ir, degree, m + l_max] = np.sum(shell * ylm * weight)
@@ -118,9 +137,7 @@ class SphericalVoxelGrid:
 
         Sets self.amplitude from the provided coefficient array.
         """
-        theta = self.theta_coords
-        phi = self.phi_coords
-        theta_grid, phi_grid = np.meshgrid(theta, phi, indexing="ij")
+        sh_values = self._get_sh_values(l_max)
 
         for ir in range(self.size):
             shell = np.zeros((self.size, self.size), dtype=np.float64)
@@ -128,7 +145,7 @@ class SphericalVoxelGrid:
                 for m in range(-degree, degree + 1):
                     c = coeffs[ir, degree, m + l_max]
                     if abs(c) > 1e-15:
-                        ylm = sph_harm_y(degree, m, theta_grid, phi_grid).real
+                        ylm = sh_values[(degree, m)]
                         shell += c * ylm
             self.amplitude[ir, :, :] = shell
 

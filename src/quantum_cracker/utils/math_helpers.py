@@ -8,6 +8,9 @@ from scipy.special import sph_harm_y
 
 from quantum_cracker.utils.constants import GOLDEN_RATIO, NUM_THREADS
 
+# Cache for raw SH bases (keyed by grid_size, n_modes)
+_sh_basis_cache: dict[tuple[int, int], NDArray[np.float64]] = {}
+
 # Cache for QR-orthogonalized SH bases (keyed by grid_size, n_modes)
 _qr_basis_cache: dict[tuple[int, int], NDArray[np.float64]] = {}
 
@@ -132,10 +135,16 @@ def build_sh_basis(
 ) -> NDArray[np.float64]:
     """Build raw SH basis matrix on a grid_size x grid_size angular grid.
 
+    Results are cached per (grid_size, n_modes).
+
     Returns:
         basis: (grid_size^2, n_modes) matrix where column i is Y_{l,m}
                evaluated on the grid for the first n_modes spherical harmonics.
     """
+    cache_key = (grid_size, n_modes)
+    if cache_key in _sh_basis_cache:
+        return _sh_basis_cache[cache_key]
+
     theta = np.linspace(0, np.pi, grid_size)
     phi = np.linspace(0, 2 * np.pi, grid_size)
     theta_grid, phi_grid = np.meshgrid(theta, phi, indexing="ij")
@@ -152,7 +161,39 @@ def build_sh_basis(
             bit_idx += 1
         degree += 1
 
+    _sh_basis_cache[cache_key] = basis
     return basis
+
+
+def precompute_sh_values(
+    theta_grid: NDArray[np.float64],
+    phi_grid: NDArray[np.float64],
+    l_max: int,
+) -> dict[tuple[int, int], NDArray[np.float64]]:
+    """Precompute real spherical harmonic values on an angular grid.
+
+    Evaluates Y_{l,m}(theta, phi).real for all (l, m) with l <= l_max
+    and returns a dict keyed by (degree, order).
+
+    Args:
+        theta_grid: 2D array of polar angles.
+        phi_grid: 2D array of azimuthal angles (same shape as theta_grid).
+        l_max: Maximum SH degree to compute.
+
+    Returns:
+        Dict mapping (l, m) -> Y_{l,m} evaluated on the grid (same shape as input).
+    """
+    result: dict[tuple[int, int], NDArray[np.float64]] = {}
+    for degree in range(l_max + 1):
+        for m in range(-degree, degree + 1):
+            result[(degree, m)] = sph_harm_y(degree, m, theta_grid, phi_grid).real
+    return result
+
+
+def clear_sh_caches() -> None:
+    """Clear all SH basis caches. Useful for testing."""
+    _sh_basis_cache.clear()
+    _qr_basis_cache.clear()
 
 
 def build_qr_sh_basis(
